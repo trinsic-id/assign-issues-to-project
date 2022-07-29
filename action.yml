@@ -17,7 +17,6 @@ inputs:
     description: 'the name of the repository'
     required: true
     default: ''
-outputs:
 runs:
   using: "composite"
   steps:
@@ -29,10 +28,9 @@ runs:
       run: |
         pip install -r ./requirements.txt
         python ./github_management.py
-      working-directory: .github/python
+      shell: pwsh
       env:
-        API_GITHUB_TOKEN: ${{ secrets.API_GITHUB_TOKEN }}
-        GITHUB_PROJECT_NUMBER: 4
-        GITHUB_REPO_NAMES: "okapi,sdk,server,pronghorn,protoc-gen-json,protoc-gen-sdk,v1-issues"
-        GITHUB_ORG_NAME: "trinsic-id"
-      # TODO Support setting up python
+        API_GITHUB_TOKEN: ${{ inputs.githubToken }}
+        GITHUB_PROJECT_NUMBER: ${{ inputs.projectNumber }}
+        GITHUB_REPO_NAMES: ${{ inputs.repoName }}
+        GITHUB_ORG_NAME: ${{ inputs.orgName }}
