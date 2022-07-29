@@ -13,9 +13,26 @@ inputs:
     description: 'the name of the organization to use'
     required: true
     default: ''
+  repoName:
+    description: 'the name of the repository'
+    required: true
+    default: ''
 outputs:
 runs:
   using: "composite"
   steps:
-    - id: setuppython
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.9
+    - name: Install requirements
+      run: |
+        pip install -r ./requirements.txt
+        python ./github_management.py
+      working-directory: .github/python
+      env:
+        API_GITHUB_TOKEN: ${{ secrets.API_GITHUB_TOKEN }}
+        GITHUB_PROJECT_NUMBER: 4
+        GITHUB_REPO_NAMES: "okapi,sdk,server,pronghorn,protoc-gen-json,protoc-gen-sdk,v1-issues"
+        GITHUB_ORG_NAME: "trinsic-id"
       # TODO Support setting up python
