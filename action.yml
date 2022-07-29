@@ -26,8 +26,8 @@ runs:
         python-version: 3.9
     - name: Install requirements
       run: |
-        pip install -r ./requirements.txt
-        python ./github_management.py
+        pip install -r ${{ github.action_path }}/requirements.txt
+        python ${{ github.action_path }}/github_management.py
       shell: pwsh
       env:
         API_GITHUB_TOKEN: ${{ inputs.githubToken }}
