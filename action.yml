@@ -1,0 +1,21 @@
+name: 'Assign Issues To Project'
+description: 'Assign issues to a given github project'
+inputs:
+  githubToken:
+    description: 'the github token to use'
+    required: true
+    default: ''
+  projectNumber:
+    description: 'the number of the project to use'
+    required: true
+    default: ''
+  orgName:
+    description: 'the name of the organization to use'
+    required: true
+    default: ''
+outputs:
+runs:
+  using: "composite"
+  steps:
+    - id: setuppython
+      # TODO Support setting up python
