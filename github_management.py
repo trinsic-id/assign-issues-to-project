@@ -87,7 +87,7 @@ class GithubAutomation:
 
     @staticmethod
     def get_graphql(file_name: str) -> str:
-        with open(file_name, "r") as fid:
+        with open(os.path.join(os.path.dirname(__file__), file_name), "r") as fid:
             return "\n".join(fid.readlines())
 
     def get_project_data(self):
