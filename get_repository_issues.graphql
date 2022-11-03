@@ -1,0 +1,20 @@
+query($org: String!, $repo_name: String!, $page_size: Int!, $update_date: DateTime!) {
+    organization(login: $org) {
+        repository(name: $repo_name) {
+            id
+            issues(first: $page_size, filterBy: {since: $update_date}) {
+                nodes {
+                    id
+                    title
+                    number
+                    createdAt
+                    state
+                }
+                pageInfo {
+                    hasNextPage
+                    endCursor
+                }
+            }
+        }
+    }
+}

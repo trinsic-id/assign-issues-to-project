@@ -1,0 +1,48 @@
+query ($org: String!, $project_number: Int!, $page_size: Int!, $after: String) {
+    organization(login: $org) {
+        projectV2(number: $project_number) {
+            id
+            items(first: $page_size, after: $after) {
+                nodes {
+                    id
+                    fieldValues(first:$page_size){
+                        nodes {
+                            ... on ProjectV2ItemFieldSingleSelectValue {
+                                name
+                                optionId
+
+                                field {
+                                    ... on ProjectV2SingleSelectField {
+                                        name
+                                        id
+                                        options {
+                                            id
+                                            name
+                                        }
+                                    }
+                                }
+
+                                # TODO - support other types of values?
+                            }
+                        }
+                    }
+                    content {
+                        ... on Issue {
+                            id
+                            state
+                            title
+                        }
+                    }
+                    id
+                    isArchived
+                    updatedAt
+                    type
+                }
+                pageInfo {
+                    endCursor
+                    hasNextPage
+                }
+            }
+        }
+    }
+}

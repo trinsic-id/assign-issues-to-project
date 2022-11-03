@@ -1,0 +1,5 @@
+mutation($project:ID!, $item_id:ID!) {
+  deleteProjectV2Item(input: {projectId: $project, itemId: $item_id}) {
+      deletedItemId
+  }
+}

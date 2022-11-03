@@ -1,5 +1,3 @@
-import datetime
-import json
 import logging
 import os
 from datetime import datetime, timedelta
@@ -9,8 +7,12 @@ from gql import gql, Client
 from gql.transport.aiohttp import AIOHTTPTransport
 
 
+def strip_empty(l: list) -> list:
+    return [x for x in l if x]
+
+
 class GithubAutomation:
-    """Automate certain github operations for our team"""
+    """Automate certain GitHub operations for our team"""
 
     platform_project_id = int(os.getenv("GITHUB_PROJECT_NUMBER", "N/A"))
     api_token = os.getenv("API_GITHUB_TOKEN")
@@ -32,32 +34,23 @@ class GithubAutomation:
         self.get_project_data()
 
     def mark_done_anything_closed(self):
-        project_items = self.get_project_items()
+        project_items = strip_empty(self.get_project_items())
         for item in project_items:
-            node = item["node"]
-            try:
-                status_id, field_id, status_options = self.get_project_status(node)
-                if any(
-                    [
-                        option["id"] == status_id
-                        and option["name"].lower() != "done"
-                        and node["content"]["__typename"].lower() == "issue"
-                        and node["content"]["state"].lower() == "closed"
-                        for option in status_options["options"]
-                    ]
-                ):
-                    logging.info(f"Marking {node} done")
-                    done_id = [
-                        option["id"]
-                        for option in status_options["options"]
-                        if option["name"].lower() == "done"
-                    ][0]
-                    self.update_project_next_item(
-                        self.project_id, node["id"], field_id, done_id
-                    )
-            except Exception as e:
-                logging.error(f"Failed on {node}: {e}")
-                pass
+            status, field_id, status_options = self.get_project_status(item)
+            if (
+                status
+                and status.lower() != "done"
+                and item["content"]["state"].lower() == "closed"
+            ):
+                logging.info(f"Marking {item} done")
+                done_id = [
+                    option["id"]
+                    for option in status_options
+                    if option["name"].lower() == "done"
+                ][0]
+                self.update_project_v2_item(
+                    self.project_id, item["id"], field_id, done_id
+                )
 
     @staticmethod
     def get_issue_states(repo_issues: Dict[str, list]) -> Dict[str, str]:
@@ -71,44 +64,34 @@ class GithubAutomation:
 
     @staticmethod
     def get_project_status(node: dict) -> Tuple[str, str, dict]:
-        field_values = node["fieldValues"]["edges"]
+        field_values = strip_empty(node["fieldValues"]["nodes"])
+        if not field_values:
+            return "", "", {}
         status_field: dict = [
-            field["node"]
+            field
             for field in field_values
-            if field["node"]["projectField"]["name"] == "Status"
+            if field and field["field"]["name"] == "Status"
         ][0]
 
         return (
-            status_field["value"],
-            status_field["projectField"]["id"],
-            json.loads(status_field["projectField"]["settings"]),
+            status_field["name"],
+            status_field["field"]["id"],
+            status_field["field"]["options"],
         )
 
     def assign_issues_to_project(self):
         # Get PRs by repository
         for repository in self.repository_names:
             for issue in self.get_repository_issues(repository):
-                self.add_to_project(self.project_id, issue["node"]["id"])
+                self.add_to_project(self.project_id, issue["id"])
+
+    @staticmethod
+    def get_graphql(file_name: str) -> str:
+        with open(file_name, "r") as fid:
+            return "\n".join(fid.readlines())
 
     def get_project_data(self):
-        query = gql(
-            """
-query($org: String!, $number: Int!) {
-  organization(login: $org){
-    projectNext(number: $number) {
-      id
-      fields(first:100) {
-        nodes {
-          id
-          name
-          settings
-        }
-      }
-    }
-  }
-}
-    """
-        )
+        query = gql(GithubAutomation.get_graphql("get_project_id.graphql"))
         result = self.client.execute(
             query,
             variable_values={
@@ -116,20 +99,10 @@ query($org: String!, $number: Int!) {
                 "org": GithubAutomation.org_name,
             },
         )
-        self.project_id = result["organization"]["projectNext"]["id"]
+        self.project_id = result["organization"]["projectV2"]["id"]
 
     def add_to_project(self, project_id: str, item_id: str):
-        query = gql(
-            """
-mutation($project:ID!, $item_id:ID!) {
-  addProjectNextItem(input: {projectId: $project, contentId: $item_id}) {
-    projectNextItem {
-      id
-    }
-  }
-}
-        """
-        )
+        query = gql(GithubAutomation.get_graphql("add_to_project.graphql"))
         self.client.execute(
             query, variable_values={"project": project_id, "item_id": item_id}
         )
@@ -137,35 +110,16 @@ mutation($project:ID!, $item_id:ID!) {
     def remove_from_project(self, project_id: str, item_id: str):
         query = gql(
             """
-mutation($project:ID!, $item_id:ID!) {
-  deleteProjectNextItem(input: {projectId: $project, contentId: $item_id}) {
-    projectNextItem {
-      id
-    }
-  }
-}
         """
         )
         self.client.execute(
             query, variable_values={"project": project_id, "item_id": item_id}
         )
 
-    def update_project_next_item(
+    def update_project_v2_item(
         self, project_id: str, item_id: str, field_id: str, field_value: str
     ):
-        query = gql(
-            """
-mutation ($project: ID!, $item_id: ID!, $field_id: ID!, $field_value: String!) {
-  updateProjectNextItemField(
-    input: {projectId: $project, itemId: $item_id, fieldId: $field_id, value: $field_value}
-  ) {
-    projectNextItem {
-      id
-    }
-  }
-}
-            """
-        )
+        query = gql(GithubAutomation.get_graphql("update_project_v2_item.graphql"))
         self.client.execute(
             query,
             variable_values={
@@ -178,116 +132,25 @@ mutation ($project: ID!, $item_id: ID!, $field_id: ID!, $field_value: String!) {
 
     def get_project_items(self):
         page_size = 100
-        query = gql(
-            """
-query ($org: String!, $project_number: Int!, $page_size: Int!) {
-    organization(login: $org) {
-        projectNext(number: $project_number) {
-            id
-            items(first: $page_size) {
-                edges {
-                    node {
-                        fieldValues(first:100){
-                            edges {
-                                node {
-                                    projectField {
-                                        id
-                                        name
-                                        dataType
-                                        settings
-                                    }
-                                    value
-                                }
-                            }
-                        }
-                        content {
-                            __typename
-                            ... on Issue {
-                                id
-                                state
-                            }
-                        }
-                        id
-                        isArchived
-                        updatedAt
-                        title
-                        type
-                    }
-                    cursor
-                }
-            }
-        }
-    }
-}
-    """
-        )
-        result = self.client.execute(
-            query,
-            variable_values={
-                "org": self.org_name,
-                "project_number": self.platform_project_id,
-                "page_size": page_size,
-            },
-        )
-        new_items = result["organization"]["projectNext"]["items"]["edges"]
+        query = gql(GithubAutomation.get_graphql("get_project_items.graphql"))
         project_items = []
-        project_items.extend(new_items)
+        page_info = {"hasNextPage": True}
+        end_cursor = ""
         # Prevent infinite loop
-        while len(new_items) >= page_size:
-            query = gql(
-                """
-query ($org: String!, $project_number: Int!, $page_size: Int!, $after: String!) {
-    organization(login: $org) {
-        projectNext(number: $project_number) {
-            id
-            items(first: $page_size, after: $after) {
-                edges {
-                    node {
-                        fieldValues(first:100){
-                            edges {
-                                node {
-                                    projectField {
-                                        id
-                                        name
-                                        dataType
-                                        settings
-                                    }
-                                    value
-                                }
-                            }
-                        }
-                        content {
-                            __typename
-                            ... on Issue {
-                                id
-                                state
-                            }
-                        }
-                        id
-                        isArchived
-                        updatedAt
-                        title
-                        type
-                    }
-                    cursor
-                }
-            }
-        }
-    }
-}
-        """
-            )
+        while page_info["hasNextPage"]:
             result = self.client.execute(
                 query,
                 variable_values={
                     "org": self.org_name,
                     "project_number": self.platform_project_id,
                     "page_size": page_size,
-                    "after": new_items[-1]["cursor"],
+                    "after": end_cursor,
                 },
             )
-            new_items = result["organization"]["projectNext"]["items"]["edges"]
-            project_items.extend(new_items)
+            new_items = result["organization"]["projectV2"]["items"]
+            page_info = new_items["pageInfo"]
+            end_cursor = page_info["endCursor"]
+            project_items.extend(new_items["nodes"])
         return project_items
 
     def get_repository_issues(self, repo_name: str, update_since: datetime = None):
@@ -300,66 +163,24 @@ query ($org: String!, $project_number: Int!, $page_size: Int!, $after: String!) 
             f"Scanning repository={self.org_name}/{repo_name} for issues since {update_time_str}..."
         )
 
-        query = gql(
-            """
-query($org: String!, $repo_name: String!, $page_size: Int!, $update_date: DateTime!) {
-  organization(login: $org) {
-    repository(name: $repo_name) {
-      id
-       issues(first: $page_size, filterBy: {since: $update_date}) {
-        edges {
-          node {
-            id
-            title
-            number
-            createdAt
-            state
-          }
-          cursor
-        }
-      }
-    }
-  }
-}
-    """
-        )
+        query = gql(GithubAutomation.get_graphql("get_repository_issues.graphql"))
         result = self.client.execute(
             query,
             variable_values={
                 "org": self.org_name,
                 "repo_name": repo_name,
-                "cursor": "",
                 "page_size": page_size,
                 "update_date": update_time_str,
             },
         )
-        new_issues = result["organization"]["repository"]["issues"]["edges"]
         issues = []
-        issues.extend(new_issues)
+        new_issues = result["organization"]["repository"]["issues"]
+        page_info = new_issues["pageInfo"]
+        issues.extend(new_issues["nodes"])
         # Prevent infinite loop
         while len(new_issues) >= page_size:
             query = gql(
-                """
-query ($org: String!, $repo_name: String!, $page_size: Int!, $update_date: DateTime!, $after: String!) {
-  organization(login: $org) {
-    repository(name: $repo_name) {
-      id
-       issues(first: $page_size, after: $after, filterBy: {since: $update_date}) {
-        edges {
-          node {
-            id
-            title
-            number
-            createdAt
-            state
-          }
-          cursor
-        }
-      }
-    }
-  }
-}
-        """
+                GithubAutomation.get_graphql("get_repository_issues_paginated.graphql")
             )
             result = self.client.execute(
                 query,
@@ -369,11 +190,12 @@ query ($org: String!, $repo_name: String!, $page_size: Int!, $update_date: DateT
                     "cursor": "",
                     "page_size": page_size,
                     "update_date": update_time_str,
-                    "after": new_issues[-1]["cursor"],
+                    "after": page_info["endCursor"],
                 },
             )
-            new_issues = result["organization"]["repository"]["issues"]["edges"]
-            issues.extend(new_issues)
+            new_issues = result["organization"]["repository"]["issues"]
+            page_info = new_issues["pageInfo"]
+            issues.extend(new_issues["nodes"])
         return issues
 
 
