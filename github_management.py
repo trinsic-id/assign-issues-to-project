@@ -40,6 +40,7 @@ class GithubAutomation:
             if (
                 status
                 and status.lower() != "done"
+                and item['content']
                 and item["content"]["state"].lower() == "closed"
             ):
                 logging.info(f"Marking {item} done")
